@@ -1,677 +1,517 @@
-from collections import OrderedDict
-import random
 import json
-import os
+import math
+import random
 
-from pygame import Rect
 import pygame
-import numpy as np
 
-WINDOW_WIDTH, WINDOW_HEIGHT = 500, 601
-GRID_WIDTH, GRID_HEIGHT = 300, 600
-TILE_SIZE = 30
+CELL = 30
+COLS, ROWS = 10, 20
+BOARD_W, BOARD_H = COLS * CELL, ROWS * CELL
+WIDTH, HEIGHT = 500, 600
 LEADERBOARD_FILE = "leaderboard.json"
+CLEAR_TIME = 0.4
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
-GRAY = (50, 50, 50)
-DARK = (20, 20, 20)
+GRAY = (70, 70, 80)
 ACCENT = (0, 200, 255)
-HIGHLIGHT = (255, 220, 0)
+GOLD = (255, 220, 0)
+RED = (255, 80, 80)
+MUTED = (150, 150, 170)
 MENU_BG = (15, 15, 25)
+PANEL_BG = (30, 30, 40)
+GRID_LINE = (40, 40, 50)
+
+SHAPES = {
+    "I": [[1, 1, 1, 1]],
+    "O": [[1, 1], [1, 1]],
+    "T": [[0, 1, 0], [1, 1, 1]],
+    "S": [[0, 1, 1], [1, 1, 0]],
+    "Z": [[1, 1, 0], [0, 1, 1]],
+    "J": [[1, 0, 0], [1, 1, 1]],
+    "L": [[0, 0, 1], [1, 1, 1]],
+}
+COLORS = {
+    "I": (0, 240, 240),
+    "O": (240, 240, 0),
+    "T": (160, 0, 240),
+    "S": (0, 220, 0),
+    "Z": (240, 0, 0),
+    "J": (30, 60, 255),
+    "L": (255, 150, 0),
+}
+LINE_POINTS = {1: 100, 2: 300, 3: 500, 4: 800}
+LINE_NAMES = {1: "SINGLE", 2: "DOUBLE", 3: "TRIPLE", 4: "TETRIS!"}
+
+pygame.init()
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Tetris")
+clock = pygame.time.Clock()
+small_font = pygame.font.Font(None, 22)
+font = pygame.font.Font(None, 28)
+big_font = pygame.font.Font(None, 48)
+title_font = pygame.font.Font(None, 90)
 
 
-def remove_empty_columns(arr, _x_offset=0, _keep_counting=True):
-    for colid, col in enumerate(arr.T):
-        if col.max() == 0:
-            if _keep_counting:
-                _x_offset += 1
-            arr, _x_offset = remove_empty_columns(
-                np.delete(arr, colid, 1), _x_offset, _keep_counting)
-            break
-        else:
-            _keep_counting = False
-    return arr, _x_offset
+def cells(shape, x, y):
+    for row_index, row in enumerate(shape):
+        for col_index, filled in enumerate(row):
+            if filled:
+                yield x + col_index, y + row_index
 
 
-class BottomReached(Exception):
-    pass
+def rotated(shape):
+    # rotate 90 degrees clockwise
+    return [list(row) for row in zip(*shape[::-1])]
 
 
-class TopReached(Exception):
-    pass
-
-
-class Block(pygame.sprite.Sprite):
-
-    @staticmethod
-    def collide(block, group):
-        for other_block in group:
-            if block == other_block:
-                continue
-            if pygame.sprite.collide_mask(block, other_block) is not None:
-                return True
-        return False
-
-    def __init__(self):
-        super().__init__()
-        self.color = random.choice((
-            (200, 200, 200),
-            (215, 133, 133),
-            (30, 145, 255),
-            (0, 170, 0),
-            (180, 0, 140),
-            (200, 200, 0),
-            (255, 140, 0),
-            (0, 200, 200),
-        ))
-        self.current = True
-        self.struct = np.array(self.struct)
-        if random.randint(0, 1):
-            self.struct = np.rot90(self.struct)
-        if random.randint(0, 1):
-            self.struct = np.flip(self.struct, 0)
-        self._draw()
-
-    def _draw(self, x=4, y=0):
-        width = len(self.struct[0]) * TILE_SIZE
-        height = len(self.struct) * TILE_SIZE
-        self.image = pygame.surface.Surface([width, height], pygame.SRCALPHA)
-        self.rect = Rect(0, 0, width, height)
-        self.x = x
-        self.y = y
-        for y, row in enumerate(self.struct):
-            for x, col in enumerate(row):
-                if col:
-                    r = Rect(x*TILE_SIZE + 1, y*TILE_SIZE + 1,
-                             TILE_SIZE - 2, TILE_SIZE - 2)
-                    pygame.draw.rect(self.image, self.color, r, border_radius=4)
-                    lighter = tuple(min(255, c + 60) for c in self.color)
-                    pygame.draw.rect(self.image, lighter, r, width=2, border_radius=4)
-        self._create_mask()
-
-    def redraw(self):
-        self._draw(self.x, self.y)
-
-    def _create_mask(self):
-        self.mask = pygame.mask.from_surface(self.image)
-
-    def draw_ghost(self, screen, target_y):
-        ghost_surf = pygame.surface.Surface(
-            (len(self.struct[0]) * TILE_SIZE, len(self.struct) * TILE_SIZE),
-            pygame.SRCALPHA)
-        for y, row in enumerate(self.struct):
-            for x, col in enumerate(row):
-                if col:
-                    r = Rect(x*TILE_SIZE + 2, y*TILE_SIZE + 2,
-                             TILE_SIZE - 4, TILE_SIZE - 4)
-                    ghost_color = (*self.color, 90)
-                    pygame.draw.rect(ghost_surf, ghost_color, r, border_radius=4)
-                    border = (*self.color, 160)
-                    pygame.draw.rect(ghost_surf, border, r, width=2, border_radius=4)
-        screen.blit(ghost_surf, (int(self.x * TILE_SIZE), int(target_y * TILE_SIZE)))
-
-    def initial_draw(self):
-        raise NotImplementedError
-
-    @property
-    def group(self):
-        return self.groups()[0]
-
-    @property
-    def x(self):
-        return self._x
-
-    @x.setter
-    def x(self, value):
-        self._x = value
-        self.rect.left = value*TILE_SIZE
-
-    @property
-    def y(self):
-        return self._y
-
-    @y.setter
-    def y(self, value):
-        self._y = value
-        self.rect.top = value*TILE_SIZE
-
-    def move_left(self, group):
-        self.x -= 1
-        if self.x < 0 or Block.collide(self, group):
-            self.x += 1
-
-    def move_right(self, group):
-        self.x += 1
-        if self.rect.right > GRID_WIDTH or Block.collide(self, group):
-            self.x -= 1
-
-    def move_down(self, group):
-        self.y += 1
-        if self.rect.bottom > GRID_HEIGHT or Block.collide(self, group):
-            self.y -= 1
-            self.current = False
-            raise BottomReached
-
-    def rotate(self, group):
-        self.image = pygame.transform.rotate(self.image, 90)
-        self.rect.width = self.image.get_width()
-        self.rect.height = self.image.get_height()
-        self._create_mask()
-        while self.rect.right > GRID_WIDTH:
-            self.x -= 1
-        while self.rect.left < 0:
-            self.x += 1
-        while self.rect.bottom > GRID_HEIGHT:
-            self.y -= 1
-        while True:
-            if not Block.collide(self, group):
-                break
-            self.y -= 1
-        self.struct = np.rot90(self.struct)
-
-    def update(self):
-        if self.current:
-            self.move_down()
-
-
-class SquareBlock(Block):
-    struct = ((1, 1), (1, 1))
-
-
-class TBlock(Block):
-    struct = ((1, 1, 1), (0, 1, 0))
-
-
-class LineBlock(Block):
-    struct = ((1,), (1,), (1,), (1,))
-
-
-class LBlock(Block):
-    struct = ((1, 1), (1, 0), (1, 0))
-
-
-class JBlock(Block):
-    struct = ((1, 1), (0, 1), (0, 1))
-
-
-class ZBlock(Block):
-    struct = ((0, 1), (1, 1), (1, 0))
-
-
-class SBlock(Block):
-    struct = ((1, 0), (1, 1), (0, 1))
-
-
-class TSpinBlock(Block):
-    struct = ((0, 1, 0), (1, 1, 1), (0, 0, 0))
-
-
-class BlocksGroup(pygame.sprite.OrderedUpdates):
-
-    @staticmethod
-    def get_random_block():
-        return random.choice(
-            (SquareBlock, TBlock, LineBlock, LBlock, JBlock,
-             ZBlock, SBlock, TSpinBlock))()
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(self, *args, **kwargs)
-        self._reset_grid()
-        self._ignore_next_stop = False
-        self.score = 0
-        self.next_block = None
-        self.lines_cleared = 0
-        self.stop_moving_current_block()
-        self._create_new_block()
-
-    def _check_line_completion(self):
-        for i, row in enumerate(self.grid[::-1]):
-            if all(row):
-                self.score += 5
-                self.lines_cleared += 1
-                affected_blocks = list(
-                    OrderedDict.fromkeys(self.grid[-1 - i]))
-                for block, y_offset in affected_blocks:
-                    block.struct = np.delete(block.struct, y_offset, 0)
-                    if block.struct.any():
-                        block.struct, x_offset = \
-                            remove_empty_columns(block.struct)
-                        block.x += x_offset
-                        block.redraw()
-                    else:
-                        self.remove(block)
-                for block in self:
-                    if block.current:
-                        continue
-                    while True:
-                        try:
-                            block.move_down(self)
-                        except BottomReached:
-                            break
-                self.update_grid()
-                self._check_line_completion()
-                break
-
-    def _reset_grid(self):
-        self.grid = [[0 for _ in range(10)] for _ in range(20)]
-
-    def _create_new_block(self):
-        new_block = self.next_block or BlocksGroup.get_random_block()
-        if Block.collide(new_block, self):
-            raise TopReached
-        self.add(new_block)
-        self.next_block = BlocksGroup.get_random_block()
-        self.update_grid()
-        self._check_line_completion()
-
-    def update_grid(self):
-        self._reset_grid()
-        for block in self:
-            for y_offset, row in enumerate(block.struct):
-                for x_offset, digit in enumerate(row):
-                    if digit == 0:
-                        continue
-                    rowid = block.y + y_offset
-                    colid = block.x + x_offset
-                    self.grid[rowid][colid] = (block, y_offset)
-
-    def _can_place(self, block, y, x):
-        rows = len(block.struct)
-        cols = len(block.struct[0])
-        for by in range(rows):
-            for bx in range(cols):
-                if block.struct[by][bx] == 0:
-                    continue
-                gy = int(y) + by
-                gx = int(x) + bx
-                if gy >= 20 or gx < 0 or gx >= 10:
-                    return False
-                cell = self.grid[gy][gx]
-                if cell != 0 and cell[0] != block:
-                    return False
-        return True
-
-    def get_landing_y(self):
-        block = self.current_block
-        y = block.y
-        while self._can_place(block, y + 1, block.x):
-            y += 1
-        return y
-
-    @property
-    def current_block(self):
-        return self.sprites()[-1]
-
-    def update_current_block(self):
-        try:
-            self.current_block.move_down(self)
-        except BottomReached:
-            self.stop_moving_current_block()
-            self._create_new_block()
-        else:
-            self.update_grid()
-
-    def move_current_block(self):
-        if self._current_block_movement_heading is None:
-            return
-        action = {
-            pygame.K_DOWN: self.current_block.move_down,
-            pygame.K_LEFT: self.current_block.move_left,
-            pygame.K_RIGHT: self.current_block.move_right
-        }
-        try:
-            action[self._current_block_movement_heading](self)
-        except BottomReached:
-            self.stop_moving_current_block()
-            self._create_new_block()
-        else:
-            self.update_grid()
-
-    def start_moving_current_block(self, key):
-        if self._current_block_movement_heading is not None:
-            self._ignore_next_stop = True
-        self._current_block_movement_heading = key
-
-    def stop_moving_current_block(self):
-        if self._ignore_next_stop:
-            self._ignore_next_stop = False
-        else:
-            self._current_block_movement_heading = None
-
-    def rotate_current_block(self):
-        if not isinstance(self.current_block, SquareBlock):
-            self.current_block.rotate(self)
-            self.update_grid()
+class Piece:
+    def __init__(self, kind):
+        self.kind = kind
+        self.shape = [row[:] for row in SHAPES[kind]]
+        self.x = COLS // 2 - len(self.shape[0]) // 2
+        self.y = 0
 
 
 class Particle:
     def __init__(self, x, y, color):
         self.x = x
         self.y = y
-        self.vx = random.uniform(-3, 3)
-        self.vy = random.uniform(-5, -1)
-        self.life = 1.0
+        self.vx = random.uniform(-120, 120)
+        self.vy = random.uniform(-250, -50)
         self.color = color
-        self.size = random.randint(2, 5)
+        self.life = 1.0
 
     def update(self, dt):
         self.x += self.vx * dt
         self.y += self.vy * dt
-        self.vy += 8 * dt
+        self.vy += 600 * dt
         self.life -= dt * 1.5
 
-    def draw(self, screen):
-        if self.life > 0:
-            alpha = int(255 * min(1, self.life))
-            s = pygame.Surface((self.size * 2, self.size * 2), pygame.SRCALPHA)
-            pygame.draw.circle(s, (*self.color, alpha), (self.size, self.size), self.size)
-            screen.blit(s, (int(self.x - self.size), int(self.y - self.size)))
+    def draw(self, surface):
+        size = max(1, int(5 * self.life))
+        pygame.draw.rect(surface, self.color, (self.x, self.y, size, size))
+
+
+class Game:
+    def __init__(self):
+        self.board = [[None] * COLS for _ in range(ROWS)]
+        self.bag = []
+        self.next = Piece(self.next_kind())
+        self.hold_kind = None
+        self.can_hold = True
+        self.score = 0
+        self.lines = 0
+        self.fall_timer = 0
+        self.held_dir = 0
+        self.repeat_timer = 0
+        self.clearing = []
+        self.clear_timer = 0
+        self.particles = []
+        self.popup = None
+        self.shake = 0
+        self.over = False
+        self.spawn()
+
+    @property
+    def level(self):
+        return self.lines // 10 + 1
+
+    @property
+    def playing(self):
+        return not self.over and not self.clearing
+
+    def next_kind(self):
+        # 7-bag: every piece appears once before any repeats
+        if not self.bag:
+            self.bag = list(SHAPES)
+            random.shuffle(self.bag)
+        return self.bag.pop()
+
+    def take_next(self):
+        piece, self.next = self.next, Piece(self.next_kind())
+        return piece
+
+    def spawn(self):
+        self.piece = self.take_next()
+        self.can_hold = True
+        if not self.fits(self.piece.shape, self.piece.x, self.piece.y):
+            self.over = True
+
+    def fits(self, shape, x, y):
+        for cx, cy in cells(shape, x, y):
+            if cx < 0 or cx >= COLS or cy >= ROWS or self.board[cy][cx]:
+                return False
+        return True
+
+    def move(self, dx):
+        if self.fits(self.piece.shape, self.piece.x + dx, self.piece.y):
+            self.piece.x += dx
+
+    def rotate(self):
+        shape = rotated(self.piece.shape)
+        for kick in (0, -1, 1, -2, 2):
+            if self.fits(shape, self.piece.x + kick, self.piece.y):
+                self.piece.shape = shape
+                self.piece.x += kick
+                return
+
+    def swap_hold(self):
+        if not self.can_hold:
+            return
+        kind = self.piece.kind
+        self.piece = Piece(self.hold_kind) if self.hold_kind else self.take_next()
+        self.hold_kind = kind
+        self.can_hold = False
+
+    def ghost_y(self):
+        y = self.piece.y
+        while self.fits(self.piece.shape, self.piece.x, y + 1):
+            y += 1
+        return y
+
+    def step_down(self):
+        if self.fits(self.piece.shape, self.piece.x, self.piece.y + 1):
+            self.piece.y += 1
+            return True
+        self.lock()
+        return False
+
+    def hard_drop(self):
+        start = self.piece.y
+        self.piece.y = self.ghost_y()
+        self.score += 2 * (self.piece.y - start)
+        self.shake = 0.15
+        for cx, cy in cells(self.piece.shape, self.piece.x, self.piece.y):
+            self.burst(cx * CELL + CELL // 2, (cy + 1) * CELL, COLORS[self.piece.kind], 3)
+        self.lock()
+
+    def lock(self):
+        for cx, cy in cells(self.piece.shape, self.piece.x, self.piece.y):
+            self.board[cy][cx] = self.piece.kind
+        self.piece = None
+        full = [r for r, row in enumerate(self.board) if all(row)]
+        if not full:
+            self.spawn()
+            return
+        self.clearing = full
+        self.clear_timer = CLEAR_TIME
+        self.shake = 0.3 if len(full) == 4 else 0.15
+        self.popup = [LINE_NAMES[len(full)], 1.0]
+        for r in full:
+            for c in range(COLS):
+                self.burst(c * CELL + CELL // 2, r * CELL + CELL // 2,
+                           COLORS[self.board[r][c]], 4)
+
+    def finish_clear(self):
+        count = len(self.clearing)
+        kept = [row for r, row in enumerate(self.board) if r not in self.clearing]
+        self.board = [[None] * COLS for _ in range(count)] + kept
+        self.score += LINE_POINTS[count] * self.level
+        self.lines += count
+        self.clearing = []
+        self.spawn()
+
+    def burst(self, x, y, color, count):
+        self.particles += [Particle(x, y, color) for _ in range(count)]
+
+    def handle_held_keys(self, dt, keys):
+        direction = keys[pygame.K_RIGHT] - keys[pygame.K_LEFT]
+        if direction != self.held_dir:
+            self.held_dir = direction
+            self.repeat_timer = 0
+        elif direction:
+            self.repeat_timer += dt
+            if self.repeat_timer >= 0.15:
+                self.repeat_timer -= 0.05
+                self.move(direction)
+
+    def update(self, dt, keys):
+        self.shake = max(0, self.shake - dt)
+        for p in self.particles:
+            p.update(dt)
+        self.particles = [p for p in self.particles if p.life > 0]
+        if self.popup:
+            self.popup[1] -= dt
+            if self.popup[1] <= 0:
+                self.popup = None
+
+        if self.clearing:
+            self.clear_timer -= dt
+            if self.clear_timer <= 0:
+                self.finish_clear()
+        elif not self.over:
+            self.handle_held_keys(dt, keys)
+            soft = keys[pygame.K_DOWN]
+            interval = 0.04 if soft else max(0.08, 0.8 - 0.07 * (self.level - 1))
+            self.fall_timer += dt
+            if self.fall_timer >= interval:
+                self.fall_timer = 0
+                if self.step_down() and soft:
+                    self.score += 1
 
 
 class Button:
-    def __init__(self, text, x, y, w, h, color=ACCENT, hover_color=WHITE):
+    def __init__(self, text, x, y, w=150, h=45):
         self.text = text
-        self.rect = Rect(x, y, w, h)
-        self.color = color
-        self.hover_color = hover_color
-        self.hovered = False
+        self.rect = pygame.Rect(x, y, w, h)
 
-    def draw(self, screen, font):
-        color = self.hover_color if self.hovered else self.color
-        pygame.draw.rect(screen, color, self.rect, border_radius=8)
-        pygame.draw.rect(screen, WHITE, self.rect, 2, border_radius=8)
-        surf = font.render(self.text, True, BLACK)
-        screen.blit(surf, (self.rect.centerx - surf.get_width()//2,
-                           self.rect.centery - surf.get_height()//2))
+    def draw(self):
+        hovered = self.rect.collidepoint(pygame.mouse.get_pos())
+        pygame.draw.rect(screen, WHITE if hovered else ACCENT, self.rect, border_radius=8)
+        draw_text(self.text, font, BLACK, self.rect.centerx,
+                  self.rect.centery - font.get_height() // 2)
 
-    def check_hover(self, pos):
-        self.hovered = self.rect.collidepoint(pos)
-
-    def check_click(self, pos):
+    def clicked(self, pos):
         return self.rect.collidepoint(pos)
 
 
 def load_leaderboard():
-    if os.path.exists(LEADERBOARD_FILE):
-        try:
-            with open(LEADERBOARD_FILE, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return []
-    return []
-
-
-def save_leaderboard(leaderboard):
     try:
-        with open(LEADERBOARD_FILE, "w") as f:
-            json.dump(leaderboard, f, indent=2)
-    except IOError:
-        pass
+        with open(LEADERBOARD_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
 
 
-def add_to_leaderboard(name, score):
-    lb = load_leaderboard()
-    lb.append({"name": name, "score": score})
-    lb.sort(key=lambda x: x["score"], reverse=True)
-    lb = lb[:10]
-    save_leaderboard(lb)
-    return lb
+def add_score(name, score):
+    scores = load_leaderboard()
+    scores.append({"name": name, "score": score})
+    scores = sorted(scores, key=lambda s: s["score"], reverse=True)[:10]
+    with open(LEADERBOARD_FILE, "w") as f:
+        json.dump(scores, f, indent=2)
 
 
-def draw_grid(background):
-    grid_color = (40, 40, 50)
-    for i in range(11):
-        x = TILE_SIZE * i
-        pygame.draw.line(background, grid_color, (x, 0), (x, GRID_HEIGHT))
-    for i in range(21):
-        y = TILE_SIZE * i
-        pygame.draw.line(background, grid_color, (0, y), (GRID_WIDTH, y))
+def draw_text(text, text_font, color, cx, y, alpha=255):
+    surf = text_font.render(text, True, color)
+    surf.set_alpha(alpha)
+    screen.blit(surf, (int(cx - surf.get_width() / 2), int(y)))
 
 
-def draw_centered_surface(screen, surface, y):
-    screen.blit(surface, (400 - surface.get_width()//2, y))
+def draw_cell(surface, x, y, color, size=CELL):
+    rect = pygame.Rect(x + 1, y + 1, size - 2, size - 2)
+    pygame.draw.rect(surface, color, rect, border_radius=4)
+    lighter = tuple(min(255, c + 60) for c in color)
+    pygame.draw.rect(surface, lighter, rect, 2, border_radius=4)
 
 
-def draw_rounded_rect(surface, color, rect, radius=8):
-    pygame.draw.rect(surface, color, rect, border_radius=radius)
+def draw_shape(kind, shape, cx, cy, size, color=None):
+    left = cx - len(shape[0]) * size // 2
+    top = cy - len(shape) * size // 2
+    for x, y in cells(shape, 0, 0):
+        draw_cell(screen, left + x * size, top + y * size, color or COLORS[kind], size)
+
+
+def draw_board(game):
+    surface = pygame.Surface((BOARD_W, BOARD_H))
+    for i in range(COLS + 1):
+        pygame.draw.line(surface, GRID_LINE, (i * CELL, 0), (i * CELL, BOARD_H))
+    for i in range(ROWS + 1):
+        pygame.draw.line(surface, GRID_LINE, (0, i * CELL), (BOARD_W, i * CELL))
+
+    for r, row in enumerate(game.board):
+        flash = r in game.clearing and int(game.clear_timer * 20) % 2 == 0
+        for c, kind in enumerate(row):
+            if kind:
+                draw_cell(surface, c * CELL, r * CELL, WHITE if flash else COLORS[kind])
+
+    if game.piece:
+        piece = game.piece
+        for x, y in cells(piece.shape, piece.x, game.ghost_y()):
+            rect = (x * CELL + 2, y * CELL + 2, CELL - 4, CELL - 4)
+            pygame.draw.rect(surface, COLORS[piece.kind], rect, 2, border_radius=4)
+        for x, y in cells(piece.shape, piece.x, piece.y):
+            draw_cell(surface, x * CELL, y * CELL, COLORS[piece.kind])
+
+    for p in game.particles:
+        p.draw(surface)
+    return surface
+
+
+def draw_panel(game):
+    left = BOARD_W + 10
+    pygame.draw.rect(screen, PANEL_BG, (left, 0, WIDTH - left, HEIGHT))
+    pygame.draw.line(screen, ACCENT, (left, 0), (left, HEIGHT), 2)
+    cx = (left + WIDTH) // 2
+
+    draw_text("Next", font, WHITE, cx, 20)
+    draw_shape(game.next.kind, game.next.shape, cx, 85, 25)
+
+    draw_text("Hold", font, WHITE, cx, 140)
+    if game.hold_kind:
+        color = COLORS[game.hold_kind] if game.can_hold else GRAY
+        draw_shape(game.hold_kind, SHAPES[game.hold_kind], cx, 205, 25, color)
+
+    draw_text("Score", font, WHITE, cx, 270)
+    draw_text(str(game.score), big_font, GOLD, cx, 295)
+    draw_text("Level", font, WHITE, cx, 360)
+    draw_text(str(game.level), font, ACCENT, cx, 385)
+    draw_text("Lines", font, WHITE, cx, 430)
+    draw_text(str(game.lines), font, ACCENT, cx, 455)
+
+    draw_text("Space: drop   C: hold", small_font, MUTED, cx, 530)
+    draw_text("Up: rotate   P: pause", small_font, MUTED, cx, 555)
+
+
+def draw_game(game, paused):
+    screen.fill(MENU_BG)
+    shake = 5 if game.shake > 0 else 0
+    offset = (random.randint(-shake, shake), random.randint(-shake, shake))
+    screen.blit(draw_board(game), offset)
+
+    if game.popup:
+        text, life = game.popup
+        draw_text(text, big_font, GOLD, BOARD_W // 2, 250 - (1 - life) * 60, int(255 * life))
+
+    draw_panel(game)
+
+    if paused:
+        draw_overlay(120)
+        draw_text("PAUSED", big_font, WHITE, BOARD_W // 2, 270)
+        draw_text("Press P to resume", small_font, MUTED, BOARD_W // 2, 320)
+
+
+def draw_overlay(alpha):
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, alpha))
+    screen.blit(overlay, (0, 0))
+
+
+def draw_game_over(score, name):
+    draw_overlay(180)
+    draw_text("GAME OVER", big_font, RED, WIDTH // 2, 150)
+    draw_text(f"Final Score: {score}", font, WHITE, WIDTH // 2, 210)
+    draw_text("Enter your name:", font, ACCENT, WIDTH // 2, 270)
+    box = pygame.Rect(WIDTH // 2 - 120, 310, 240, 40)
+    pygame.draw.rect(screen, (40, 40, 60), box, border_radius=6)
+    pygame.draw.rect(screen, ACCENT, box, 2, border_radius=6)
+    cursor = "|" if pygame.time.get_ticks() // 500 % 2 == 0 else ""
+    draw_text(name + cursor, font, WHITE, WIDTH // 2, box.y + 11)
+    draw_text("ENTER to save, ESC to skip", small_font, MUTED, WIDTH // 2, 365)
+
+
+def draw_menu(decor, buttons):
+    screen.fill(MENU_BG)
+    for d in decor:
+        dim = tuple(c // 4 for c in COLORS[d["kind"]])
+        draw_shape(d["kind"], SHAPES[d["kind"]], d["x"], d["y"], 20, dim)
+
+    t = pygame.time.get_ticks() / 1000
+    letters = "TETRIS"
+    for i, letter in enumerate(letters):
+        surf = title_font.render(letter, True, list(COLORS.values())[i])
+        x = WIDTH // 2 - len(letters) * 30 + i * 60 + (60 - surf.get_width()) // 2
+        screen.blit(surf, (x, 110 + math.sin(t * 3 + i) * 10))
+
+    for button in buttons:
+        button.draw()
+
+
+def draw_leaderboard(back_button):
+    screen.fill(MENU_BG)
+    draw_text("LEADERBOARD", big_font, ACCENT, WIDTH // 2, 40)
+    scores = load_leaderboard()
+    if not scores:
+        draw_text("No scores yet!", font, MUTED, WIDTH // 2, 200)
+    for i, entry in enumerate(scores):
+        y = 110 + i * 35
+        color = GOLD if i == 0 else ACCENT if i < 3 else WHITE
+        screen.blit(small_font.render(f"#{i + 1}", True, color), (140, y + 3))
+        screen.blit(font.render(entry["name"], True, WHITE), (180, y))
+        score = font.render(str(entry["score"]), True, color)
+        screen.blit(score, (380 - score.get_width(), y))
+    back_button.draw()
 
 
 def main():
-    pygame.init()
-    pygame.display.set_caption("Tetris")
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-    clock = pygame.time.Clock()
-
-    try:
-        font = pygame.font.Font("Roboto-Regular.ttf", 20)
-        title_font = pygame.font.Font("Roboto-Regular.ttf", 48)
-        big_font = pygame.font.Font("Roboto-Regular.ttf", 36)
-        small_font = pygame.font.Font("Roboto-Regular.ttf", 16)
-    except OSError:
-        font = pygame.font.Font(pygame.font.get_default_font(), 20)
-        title_font = pygame.font.Font(pygame.font.get_default_font(), 48)
-        big_font = pygame.font.Font(pygame.font.get_default_font(), 36)
-        small_font = pygame.font.Font(pygame.font.get_default_font(), 16)
-
-    background = pygame.Surface(screen.get_size())
-    background.fill(BLACK)
-    draw_grid(background)
-    background = background.convert()
-
     state = "menu"
+    game = None
     paused = False
-    game_over = False
-    player_name = ""
-    name_input_active = False
-    particles = []
+    name = ""
 
-    start_btn = Button("Start Game", 175, 250, 150, 45)
-    leaderboard_btn = Button("Leaderboard", 175, 310, 150, 45)
-    quit_btn = Button("Quit", 175, 370, 150, 45)
-    back_btn = Button("Back", 175, 520, 150, 45)
-    menu_buttons = [start_btn, leaderboard_btn, quit_btn]
+    start_button = Button("Start Game", 175, 250)
+    leaderboard_button = Button("Leaderboard", 175, 310)
+    quit_button = Button("Quit", 175, 370)
+    back_button = Button("Back", 175, 520)
+    menu_buttons = [start_button, leaderboard_button, quit_button]
 
-    MOVEMENT_KEYS = pygame.K_LEFT, pygame.K_RIGHT, pygame.K_DOWN
-    EVENT_UPDATE_CURRENT_BLOCK = pygame.USEREVENT + 1
-    EVENT_MOVE_CURRENT_BLOCK = pygame.USEREVENT + 2
-    pygame.time.set_timer(EVENT_UPDATE_CURRENT_BLOCK, 1000)
-    pygame.time.set_timer(EVENT_MOVE_CURRENT_BLOCK, 100)
+    decor = [{"kind": random.choice(list(SHAPES)),
+              "x": random.randint(0, WIDTH),
+              "y": random.randint(-100, HEIGHT),
+              "speed": random.randint(40, 100)} for _ in range(12)]
 
-    blocks = None
-    run = True
-
-    def reset_game():
-        nonlocal blocks, game_over, paused, particles
-        blocks = BlocksGroup()
-        game_over = False
-        paused = False
-        particles = []
-
-    while run:
-        dt = clock.tick(60) / 1000.0
-        mouse_pos = pygame.mouse.get_pos()
+    while True:
+        dt = clock.tick(60) / 1000
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                run = False
-                break
+                return
 
-            if state == "menu":
-                if event.type == pygame.MOUSEMOTION:
-                    for btn in menu_buttons:
-                        btn.check_hover(event.pos)
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    if start_btn.check_click(event.pos):
-                        reset_game()
-                        state = "game"
-                    elif leaderboard_btn.check_click(event.pos):
-                        state = "leaderboard"
-                    elif quit_btn.check_click(event.pos):
-                        run = False
-                        break
+            if state == "menu" and event.type == pygame.MOUSEBUTTONDOWN:
+                if start_button.clicked(event.pos):
+                    game = Game()
+                    paused = False
+                    state = "game"
+                elif leaderboard_button.clicked(event.pos):
+                    state = "leaderboard"
+                elif quit_button.clicked(event.pos):
+                    return
 
-            elif state == "leaderboard":
-                if event.type == pygame.MOUSEMOTION:
-                    back_btn.check_hover(event.pos)
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    if back_btn.check_click(event.pos):
-                        state = "menu"
+            elif state == "leaderboard" and event.type == pygame.MOUSEBUTTONDOWN:
+                if back_button.clicked(event.pos):
+                    state = "menu"
 
-            elif state == "game" and game_over:
-                if event.type == pygame.KEYDOWN:
-                    if name_input_active:
-                        if event.key == pygame.K_RETURN:
-                            name = player_name.strip() or "Anonymous"
-                            add_to_leaderboard(name, blocks.score)
-                            name_input_active = False
-                            state = "leaderboard"
-                        elif event.key == pygame.K_BACKSPACE:
-                            player_name = player_name[:-1]
-                        elif event.key == pygame.K_ESCAPE:
-                            name_input_active = False
-                            state = "menu"
-                        elif event.unicode and event.unicode.isprintable():
-                            if len(player_name) < 24:
-                                player_name += event.unicode
-                    else:
-                        if event.key == pygame.K_RETURN or event.key == pygame.K_ESCAPE:
-                            state = "menu"
+            elif state == "game" and event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    state = "menu"
+                elif event.key == pygame.K_p:
+                    paused = not paused
+                elif game.playing and not paused:
+                    if event.key == pygame.K_LEFT:
+                        game.move(-1)
+                    elif event.key == pygame.K_RIGHT:
+                        game.move(1)
+                    elif event.key == pygame.K_UP:
+                        game.rotate()
+                    elif event.key == pygame.K_SPACE:
+                        game.hard_drop()
+                    elif event.key == pygame.K_c:
+                        game.swap_hold()
 
-            elif state == "game":
-                if event.type == pygame.KEYUP:
-                    if not paused:
-                        if event.key in MOVEMENT_KEYS:
-                            blocks.stop_moving_current_block()
-                        elif event.key == pygame.K_UP:
-                            blocks.rotate_current_block()
-                    if event.key == pygame.K_p:
-                        paused = not paused
-                    if event.key == pygame.K_ESCAPE:
-                        state = "menu"
-
-                if paused:
-                    continue
-
-                if event.type == pygame.KEYDOWN:
-                    if event.key in MOVEMENT_KEYS:
-                        blocks.start_moving_current_block(event.key)
-
-                try:
-                    if event.type == EVENT_UPDATE_CURRENT_BLOCK:
-                        blocks.update_current_block()
-                    elif event.type == EVENT_MOVE_CURRENT_BLOCK:
-                        blocks.move_current_block()
-                except TopReached:
-                    game_over = True
-                    name_input_active = True
-                    player_name = ""
+            elif state == "gameover" and event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN:
+                    add_score(name.strip() or "Anonymous", game.score)
+                    state = "leaderboard"
+                elif event.key == pygame.K_ESCAPE:
+                    state = "menu"
+                elif event.key == pygame.K_BACKSPACE:
+                    name = name[:-1]
+                elif event.unicode.isprintable() and len(name) < 16:
+                    name += event.unicode
 
         if state == "menu":
-            screen.fill(MENU_BG)
-            t = pygame.time.get_ticks() / 1000.0
-            pulse = 0.5 + 0.5 * abs(pygame.math.Vector2(1, 0).rotate(t * 60).x)
-            r = max(0, min(255, int(ACCENT[0] * pulse + 100)))
-            g = max(0, min(255, int(ACCENT[1] * pulse + 100)))
-            b = 255
-            title_color = (r, g, b)
-            title = title_font.render("TETRIS", True, title_color)
-            screen.blit(title, (WINDOW_WIDTH//2 - title.get_width()//2, 120))
-            sub = small_font.render("Modern Edition", True, (150, 150, 170))
-            screen.blit(sub, (WINDOW_WIDTH//2 - sub.get_width()//2, 180))
-            for btn in menu_buttons:
-                btn.draw(screen, font)
+            for d in decor:
+                d["y"] += d["speed"] * dt
+                if d["y"] > HEIGHT + 100:
+                    d["x"], d["y"] = random.randint(0, WIDTH), -100
+            draw_menu(decor, menu_buttons)
 
         elif state == "leaderboard":
-            screen.fill(MENU_BG)
-            title = big_font.render("LEADERBOARD", True, ACCENT)
-            screen.blit(title, (WINDOW_WIDTH//2 - title.get_width()//2, 40))
-            lb = load_leaderboard()
-            if not lb:
-                msg = font.render("No scores yet!", True, (150, 150, 170))
-                screen.blit(msg, (WINDOW_WIDTH//2 - msg.get_width()//2, 200))
-            else:
-                for i, entry in enumerate(lb):
-                    y = 110 + i * 35
-                    rank_color = HIGHLIGHT if i == 0 else (ACCENT if i < 3 else WHITE)
-                    rank = small_font.render(f"#{i+1}", True, rank_color)
-                    name = font.render(entry["name"][:24], True, WHITE)
-                    score = font.render(str(entry["score"]), True, rank_color)
-                    screen.blit(rank, (140, y))
-                    screen.blit(name, (180, y))
-                    screen.blit(score, (380 - score.get_width(), y))
-            back_btn.draw(screen, font)
+            draw_leaderboard(back_button)
 
-        elif state == "game":
-            screen.blit(background, (0, 0))
-
-            if not game_over and blocks is not None:
-                try:
-                    landing_y = blocks.get_landing_y()
-                    if int(landing_y) != int(blocks.current_block.y):
-                        blocks.current_block.draw_ghost(screen, landing_y)
-                except Exception:
-                    pass
-
-            blocks.draw(screen)
-
-            for p in particles:
-                p.draw(screen)
-
-            draw_rounded_rect(screen, (30, 30, 40), Rect(310, 0, 190, 601))
-            pygame.draw.line(screen, ACCENT, (310, 0), (310, 601), 2)
-
-            next_text = font.render("Next", True, WHITE)
-            screen.blit(next_text, (400 - next_text.get_width()//2, 20))
-            if blocks and blocks.next_block:
-                draw_centered_surface(screen, blocks.next_block.image, 60)
-
-            score_label = font.render("Score", True, WHITE)
-            screen.blit(score_label, (400 - score_label.get_width()//2, 240))
-            score_val = big_font.render(str(blocks.score), True, HIGHLIGHT)
-            screen.blit(score_val, (400 - score_val.get_width()//2, 270))
-
-            lines_label = font.render("Lines", True, WHITE)
-            screen.blit(lines_label, (400 - lines_label.get_width()//2, 340))
-            lines_val = font.render(str(blocks.lines_cleared), True, ACCENT)
-            screen.blit(lines_val, (400 - lines_val.get_width()//2, 370))
-
-            if paused:
-                overlay = pygame.Surface((GRID_WIDTH, GRID_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((0, 0, 0, 150))
-                screen.blit(overlay, (0, 0))
-                pause_text = big_font.render("PAUSED", True, WHITE)
-                screen.blit(pause_text, (GRID_WIDTH//2 - pause_text.get_width()//2,
-                                         GRID_HEIGHT//2 - pause_text.get_height()//2))
-                hint = small_font.render("Press P to resume", True, (150, 150, 170))
-                screen.blit(hint, (GRID_WIDTH//2 - hint.get_width()//2,
-                                   GRID_HEIGHT//2 + 40))
-
-            if game_over:
-                overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((0, 0, 0, 180))
-                screen.blit(overlay, (0, 0))
-                go_text = big_font.render("GAME OVER", True, (255, 80, 80))
-                screen.blit(go_text, (WINDOW_WIDTH//2 - go_text.get_width()//2, 150))
-                final_score = font.render(f"Final Score: {blocks.score}", True, WHITE)
-                screen.blit(final_score, (WINDOW_WIDTH//2 - final_score.get_width()//2, 210))
-
-                if name_input_active:
-                    prompt = font.render("Enter your name:", True, ACCENT)
-                    screen.blit(prompt, (WINDOW_WIDTH//2 - prompt.get_width()//2, 270))
-                    input_rect = Rect(WINDOW_WIDTH//2 - 120, 310, 240, 40)
-                    pygame.draw.rect(screen, (40, 40, 60), input_rect, border_radius=6)
-                    pygame.draw.rect(screen, ACCENT, input_rect, 2, border_radius=6)
-                    cursor = "|" if (pygame.time.get_ticks() // 500) % 2 == 0 else ""
-                    name_surf = font.render(player_name + cursor, True, WHITE)
-                    screen.blit(name_surf, (input_rect.x + 10, input_rect.y + 8))
-                    hint = small_font.render("ENTER to save, ESC to skip", True, (150, 150, 170))
-                    screen.blit(hint, (WINDOW_WIDTH//2 - hint.get_width()//2, 365))
+        elif state in ("game", "gameover"):
+            if state == "game" and not paused:
+                game.update(dt, pygame.key.get_pressed())
+                if game.over:
+                    state = "gameover"
+                    name = ""
+            draw_game(game, paused)
+            if state == "gameover":
+                draw_game_over(game.score, name)
 
         pygame.display.flip()
-
-    pygame.quit()
 
 
 if __name__ == "__main__":
     main()
+    pygame.quit()
