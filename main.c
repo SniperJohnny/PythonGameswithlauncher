@@ -12,7 +12,7 @@
 #define PTH_FILE "python\\python312._pth"
 #define GET_PIP "python\\get-pip.py"
 #else
-#define PY_URL "https://github.com/astral-sh/python-build-standalone/releases/download/20250801/cpython-3.12.10+20250801-x86_64-unknown-linux-gnu-install_only.tar.gz"
+#define PY_URL "https://cmcc.mirrors.ustc.edu.cn/github-release/astral-sh/python-build-standalone/20250409/cpython-3.12.10+20250409-x86_64-unknown-linux-gnu-install_only.tar.gz"
 #define PY_EXE "python/bin/python3"
 #define VENV_PY "venv/bin/python3"
 #endif

@@ -2,8 +2,8 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/PythonGameswithlauncher.iml" filepath="$PROJECT_DIR$/.idea/PythonGameswithlauncher.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/Tagderoffenentürproject.iml" filepath="$PROJECT_DIR$/.idea/Tagderoffenentürproject.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/Tagderoffenentürproject2.iml" filepath="$PROJECT_DIR$/.idea/Tagderoffenentürproject2.iml" />
     </modules>
   </component>
 </project>

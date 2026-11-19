@@ -23,19 +23,20 @@ find_package(SDL2 REQUIRED)
 find_package(SDL2_image REQUIRED)
 
 # --- SDL2_ttf (ships its own cmake config) ---
-find_package(SDL2_ttf REQUIRED)
-
-# --- SDL2_gfx (NO cmake config — use pkg-config) ---
-#find_package(PkgConfig REQUIRED)
-#pkg_check_modules(SDL2_gfx REQUIRED SDL2_gfx)
+find_package(SDL2_ttf CONFIG REQUIRED)
 
 target_link_libraries(gamelauncher PRIVATE
         SDL2::SDL2
         SDL2_image::SDL2_image
-        SDL2_ttf::SDL2_ttf
+        $<IF:$<TARGET_EXISTS:SDL2_ttf::SDL2_ttf>,SDL2_ttf::SDL2_ttf,SDL2_ttf::SDL2_ttf-static>
         ${SDL2_gfx_LIBRARIES}
 )
-
 target_include_directories(gamelauncher PRIVATE
         ${SDL2_gfx_INCLUDE_DIRS}
+)
+target_include_directories(gamelauncher PRIVATE
+        $<$<PLATFORM_ID:Linux>:/home/SniperJohnny/.vcpkg-clion/vcpkg/installed/x64-linux/include/SDL2>
+)
+target_include_directories(gamelauncher PRIVATE
+        /home/SniperJohnny/.vcpkg-clion/vcpkg/installed/x64-linux/include/SDL2
 )

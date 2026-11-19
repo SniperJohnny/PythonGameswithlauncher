@@ -1,5 +1,5 @@
 ﻿#include "buttons.h"
-#include <SDL2/SDL_ttf.h>
+#include <SDL_ttf.h>
 
 void BM_render(ButtonManager *bm, SDL_Renderer *renderer, TTF_Font *font) {
     for (int i = 0; i < bm->count; i++) {
