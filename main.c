@@ -81,6 +81,17 @@ static void on_quit_click(void *ud) {
     e->quit = 1;
 }
 
+static void on_pong_click(void *ud) {
+    (void)ud;
+    if (!SDL_AtomicCAS(&setup_running, 0, 1)) return;
+
+    SDL_Thread *t = SDL_CreateThread(run_game_thread, "pong_thread", (void*)"pong.py");
+    if (!t) {
+        SDL_AtomicSet(&setup_running, 0);
+        return;
+    }
+    SDL_DetachThread(t);
+}
 
 static void on_tetris_click(void *ud) {
     (void)ud;
@@ -110,7 +121,7 @@ int main(int argc, char *argv[]) {
     struct EngineOptions options = {0};
     options.title  = "C engine test";
     options.width  = 960;
-    options.height = 544;
+    options.height = 564;
 
     Engine engine;
     if (ENGINE_init(&engine, &options) != 0) {
@@ -135,7 +146,8 @@ int main(int argc, char *argv[]) {
 
     BM_add(&buttons, (SDL_Rect) { options.width / 2 - 180, 80, 360, 96 }, "Play Tetris", on_tetris_click, &engine);
     BM_add(&buttons, (SDL_Rect) { options.width / 2 - 180, 200, 360, 96 }, "Play Space Invaders", on_spaceinvaders_click, &engine);
-    BM_add(&buttons, (SDL_Rect) { options.width / 2 - 180, 320, 360, 96 }, "Quit", on_quit_click, &engine);
+    BM_add(&buttons, (SDL_Rect) { options.width / 2 - 180, 320, 360, 96 }, "Play Pong", on_pong_click, &engine);
+    BM_add(&buttons, (SDL_Rect) { options.width / 2 - 180, 440, 360, 96 }, "Quit", on_quit_click, &engine);
 
     SDL_Event e;
     Uint32 lastTime = SDL_GetTicks();
