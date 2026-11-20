@@ -13,11 +13,11 @@ typedef struct Button {
     int             pressed;
     int             visible;
 
-    // --- ADD THESE THREE LINES ---
+
     SDL_Texture    *text_tex;
     int             tex_w;
     int             tex_h;
-    // -----------------------------
+
 } Button;
 
 #define MAX_BUTTONS 32

@@ -5,16 +5,16 @@
 
 #define PY_VER "3.12.10"
 #define GAMES_DIR "Project_Games"
+#define PY_BASE "https://cmcc.mirrors.ustc.edu.cn/github-release/astral-sh/python-build-standalone/20250409/cpython-3.12.10+20250409-"
 
 #ifdef _WIN32
-#define PY_URL "https://www.python.org/ftp/python/" PY_VER "/python-" PY_VER "-embed-amd64.zip"
+#define PY_URL PY_BASE "x86_64-pc-windows-msvc-install_only.tar.gz"
 #define PY_EXE "python\\python.exe"
-#define PTH_FILE "python\\python312._pth"
-#define GET_PIP "python\\get-pip.py"
+#define CD "cd /d "
 #else
-#define PY_URL "https://cmcc.mirrors.ustc.edu.cn/github-release/astral-sh/python-build-standalone/20250409/cpython-3.12.10+20250409-x86_64-unknown-linux-gnu-install_only.tar.gz"
+#define PY_URL PY_BASE "x86_64-unknown-linux-gnu-install_only.tar.gz"
 #define PY_EXE "python/bin/python3"
-#define VENV_PY "venv/bin/python3"
+#define CD "cd "
 #endif
 
 static SDL_atomic_t setup_running;
@@ -28,113 +28,29 @@ static int file_exists(const char *path) {
 
 static int run(const char *cmd) {
     printf("> %s\n", cmd);
-    int rc = system(cmd);
-    if (rc != 0) fprintf(stderr, "Command failed (%d): %s\n", rc, cmd);
-    return rc;
+    return system(cmd);
 }
 
-/* Returns the executable path RELATIVE to Project_Games */
-static int python_exe(char *buf, size_t n) {
-#ifdef _WIN32
-    return snprintf(buf, n, "python\\python.exe") < (int)n ? 0 : -1;
-#else
-    return snprintf(buf, n, "venv/bin/python3") < (int)n ? 0 : -1;
-#endif
-}
-
-static int python(const char *arg) {
-    char exe[512];
-    char cmd[2048];
-    if (python_exe(exe, sizeof exe) != 0) return -1;
-
-#ifdef _WIN32
-    /* Change dir, run python natively, then change back.
-       (The `cd /d` fixes the drive letter if it's on D:, and `cd ..` keeps the shell clean) */
-    snprintf(cmd, sizeof cmd, "cd /d \"%s\" && \"%s\" %s && cd ..", GAMES_DIR, exe, arg);
-#else
-    snprintf(cmd, sizeof cmd, "cd \"%s\" && \"%s\" %s; cd ..", GAMES_DIR, exe, arg);
-#endif
+static int python(const char *args) {
+    char cmd[1024];
+    snprintf(cmd, sizeof cmd, CD GAMES_DIR " && " PY_EXE " %s", args);
     return run(cmd);
 }
 
 static int setup_python(void) {
-    char cmd[1024];
-    char path[512];
-
-    snprintf(path, sizeof path, "%s/%s", GAMES_DIR, PY_EXE);
-    if (!file_exists(path)) {
-        printf("Setting up Python environment in %s/...\n", GAMES_DIR);
-#ifdef _WIN32
-        run("if not exist " GAMES_DIR "\\python mkdir " GAMES_DIR "\\python");
-        snprintf(cmd, sizeof cmd, "curl -fL -o " GAMES_DIR "\\python.zip " PY_URL);
-        if (run(cmd) != 0) return 1;
-
-        snprintf(cmd, sizeof cmd,
-            "powershell -NoProfile -Command \""
-            "Expand-Archive -Path '%s\\python.zip' -DestinationPath '%s\\python' -Force;"
-            "$d=Get-ChildItem '%s\\python' -Directory|Select -First 1;"
-            "if($d){Move-Item ($d.FullName+'\\*') '%s\\python' -Force;"
-            "Remove-Item $d.FullName -Recurse -Force}\"",
-            GAMES_DIR, GAMES_DIR, GAMES_DIR, GAMES_DIR);
-        if (run(cmd) != 0) return 1;
-
-        snprintf(path, sizeof path, "%s\\%s", GAMES_DIR, PY_EXE);
-        if (!file_exists(path)) {
-            fprintf(stderr, "Extraction failed: %s missing\n", path);
-            return 1;
-        }
-        snprintf(cmd, sizeof cmd, "del " GAMES_DIR "\\python.zip");
-        run(cmd);
-#else
-        run("mkdir -p " GAMES_DIR "/python");
-        snprintf(cmd, sizeof cmd, "curl -fL -o " GAMES_DIR "/python.tar.gz " PY_URL);
-        if (run(cmd) != 0) return 1;
-        snprintf(cmd, sizeof cmd,
-                 "tar -xzf " GAMES_DIR "/python.tar.gz -C " GAMES_DIR "/python --strip-components=1");
-        if (run(cmd) != 0) return 1;
-        snprintf(cmd, sizeof cmd, "rm " GAMES_DIR "/python.tar.gz");
-        run(cmd);
-#endif
-    }
-
-#ifdef _WIN32
-    snprintf(cmd, sizeof cmd,
-             "powershell -NoProfile -Command \""
-             "(Get-Content '%s\\%s') -replace '#import site','import site' "
-             "| Set-Content '%s\\%s'\"",
-             GAMES_DIR, PTH_FILE, GAMES_DIR, PTH_FILE);
-    run(cmd);
-
-    snprintf(path, sizeof path, "%s\\python\\Scripts\\pip.exe", GAMES_DIR);
-    if (!file_exists(path)) {
-        snprintf(cmd, sizeof cmd, "curl -fL -o " GAMES_DIR "\\" GET_PIP " https://bootstrap.pypa.io/get-pip.py");
-        if (run(cmd) != 0) return 1;
-        snprintf(cmd, sizeof cmd,
-                 "pushd \"" GAMES_DIR "\\python\" && python.exe get-pip.py && popd");
-        if (run(cmd) != 0) return 1;
-    }
-#else
-    snprintf(path, sizeof path, "%s/%s", GAMES_DIR, VENV_PY);
-    if (!file_exists(path)) {
-        snprintf(cmd, sizeof cmd, "\"%s/%s\" -m venv \"%s/venv\"", GAMES_DIR, PY_EXE, GAMES_DIR);
-        if (run(cmd) != 0) return 1;
-    }
-#endif
-
-    if (python("-m pip install --upgrade pygame-ce") != 0) return 1;
-    if (python("--version") != 0) return 1;
-    if (python("-c \"import pygame\"") != 0) return 1;
-
-    printf("Ready.\n");
-    return 0;
+    if (!file_exists(GAMES_DIR "/" PY_EXE) &&
+        run("curl -fL " PY_URL " | tar -xzf - -C " GAMES_DIR) != 0) return 1;
+    if (python("-c \"import pygame\"") == 0) return 0;
+    return python("-m pip install pygame-ce");
 }
 
-static int setup_thread(void *ud) {
-    (void)ud;
-    setup_python();
+static int game_thread(void *ud) {
+    if (setup_python() == 0) python((const char *)ud);
     SDL_AtomicSet(&setup_running, 0);
     return 0;
 }
+
+
 
 static int run_game_thread(void *ud) {
     const char *script_name = (const char *)ud;
@@ -164,17 +80,7 @@ static void on_quit_click(void *ud) {
     Engine *e = (Engine *)ud;
     e->quit = 1;
 }
-static void on_start_click(void *ud) {
-    (void)ud;
-    if (!SDL_AtomicCAS(&setup_running, 0, 1)) return;
 
-    SDL_Thread *t = SDL_CreateThread(setup_thread, "python_setup", NULL);
-    if (!t) {
-        SDL_AtomicSet(&setup_running, 0);
-        return;
-    }
-    SDL_DetachThread(t);
-}
 
 static void on_tetris_click(void *ud) {
     (void)ud;
@@ -187,13 +93,24 @@ static void on_tetris_click(void *ud) {
     }
     SDL_DetachThread(t);
 }
+static void on_spaceinvaders_click(void *ud) {
+    (void)ud;
+    if (!SDL_AtomicCAS(&setup_running, 0, 1)) return;
+
+    SDL_Thread *t = SDL_CreateThread(run_game_thread, "space_invaders_thread", (void*)"spaceinvaders.py");
+    if (!t) {
+        SDL_AtomicSet(&setup_running, 0);
+        return;
+    }
+    SDL_DetachThread(t);
+}
 
 int main(int argc, char *argv[]) {
 
     struct EngineOptions options = {0};
     options.title  = "C engine test";
-    options.width  = 480;
-    options.height = 272;
+    options.width  = 960;
+    options.height = 544;
 
     Engine engine;
     if (ENGINE_init(&engine, &options) != 0) {
@@ -216,9 +133,9 @@ int main(int argc, char *argv[]) {
     ButtonManager buttons;
     BM_init(&buttons);
 
-    BM_add(&buttons, (SDL_Rect) { 40, 40, 180, 48 }, "Play Tetris", on_tetris_click, &engine);
-    BM_add(&buttons, (SDL_Rect) { 40, 100, 180, 48 }, "Setup Python", on_start_click, &engine);
-    BM_add(&buttons, (SDL_Rect) { 40, 160, 180, 48 }, "Quit", on_quit_click, &engine);
+    BM_add(&buttons, (SDL_Rect) { options.width / 2 - 180, 80, 360, 96 }, "Play Tetris", on_tetris_click, &engine);
+    BM_add(&buttons, (SDL_Rect) { options.width / 2 - 180, 200, 360, 96 }, "Play Space Invaders", on_spaceinvaders_click, &engine);
+    BM_add(&buttons, (SDL_Rect) { options.width / 2 - 180, 320, 360, 96 }, "Quit", on_quit_click, &engine);
 
     SDL_Event e;
     Uint32 lastTime = SDL_GetTicks();
