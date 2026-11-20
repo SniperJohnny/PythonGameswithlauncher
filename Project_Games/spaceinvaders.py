@@ -1,12 +1,14 @@
 import pygame
 import random
 import math
+import json
 import sys
 
 # --- INITIALISIERUNG & KONSTANTEN ---
 pygame.init()
 WIDTH, HEIGHT = 800, 650
 FPS = 60
+LEADERBOARD_FILE = "leaderboards.spaceinvaders"
 
 # Farben
 BLACK = (10, 12, 22)
@@ -24,6 +26,7 @@ clock = pygame.time.Clock()
 
 font_small = pygame.font.SysFont("consolas", 20, bold=True)
 font_large = pygame.font.SysFont("consolas", 48, bold=True)
+font_title = pygame.font.SysFont("consolas", 72, bold=True)
 
 
 # --- PARTIKEL & STERNE ---
@@ -233,6 +236,23 @@ class PowerUp:
         surf.blit(txt, (self.x - txt.get_width() // 2, self.y - txt.get_height() // 2))
 
 
+class Button:
+    def __init__(self, text, x, y, w=220, h=48):
+        self.text = text
+        self.rect = pygame.Rect(x, y, w, h)
+
+    def clicked(self, pos):
+        return self.rect.collidepoint(pos)
+
+    def draw(self, surf):
+        hovered = self.rect.collidepoint(pygame.mouse.get_pos())
+        if hovered:
+            pygame.draw.rect(surf, CYAN, self.rect, border_radius=8)
+        pygame.draw.rect(surf, CYAN, self.rect, 2, border_radius=8)
+        txt = font_small.render(self.text, True, BLACK if hovered else CYAN)
+        surf.blit(txt, txt.get_rect(center=self.rect.center))
+
+
 # --- HILFSFUNKTIONEN ---
 def spawn_wave(wave):
     enemies = []
@@ -253,6 +273,65 @@ def spawn_explosion(particles, x, y, color, count=18):
         particles.append(Particle(x, y, color))
 
 
+def load_leaderboard():
+    try:
+        with open(LEADERBOARD_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def add_score(name, score):
+    scores = load_leaderboard()
+    scores.append({"name": name, "score": score})
+    scores = sorted(scores, key=lambda s: s["score"], reverse=True)[:10]
+    with open(LEADERBOARD_FILE, "w") as f:
+        json.dump(scores, f, indent=2)
+    return scores
+
+
+def draw_text(surf, text, fnt, color, cx, y):
+    img = fnt.render(text, True, color)
+    surf.blit(img, (cx - img.get_width() // 2, y))
+
+
+def draw_menu(surf, menu_enemies, buttons, t):
+    title = "SPACE INVADERS"
+    widths = [font_title.size(letter)[0] for letter in title]
+    x = WIDTH // 2 - sum(widths) // 2
+    for i, letter in enumerate(title):
+        color = pygame.Color(0)
+        color.hsva = ((t * 60 + i * 20) % 360, 80, 100, 100)
+        y = 90 + math.sin(t * 3 + i * 0.5) * 12
+        surf.blit(font_title.render(letter, True, color), (x, y))
+        x += widths[i]
+
+    pulse = int(180 + 75 * math.sin(t * 4))
+    draw_text(surf, "B A T T L E", font_small, (pulse, 40, 140), WIDTH // 2, 185)
+
+    for i, e in enumerate(menu_enemies):
+        e.x = 110 + i * 97 + math.sin(t * 1.5) * 35
+        e.y = 270 + math.sin(t * 2 + i) * 8
+        e.draw(surf, int(t * 3) % 2 == 0)
+
+    for button in buttons:
+        button.draw(surf)
+
+
+def draw_leaderboard(surf, scores, back_button):
+    draw_text(surf, "LEADERBOARD", font_large, CYAN, WIDTH // 2, 50)
+    if not scores:
+        draw_text(surf, "No scores yet!", font_small, WHITE, WIDTH // 2, 250)
+    for i, entry in enumerate(scores):
+        y = 130 + i * 40
+        color = YELLOW if i == 0 else CYAN if i < 3 else WHITE
+        surf.blit(font_small.render(f"#{i + 1}", True, color), (190, y))
+        surf.blit(font_small.render(entry["name"], True, WHITE), (260, y))
+        score_img = font_small.render(str(entry["score"]), True, color)
+        surf.blit(score_img, (610 - score_img.get_width(), y))
+    back_button.draw(surf)
+
+
 # --- HAUPTSPIEL ---
 def main():
     stars = [Star() for _ in range(70)]
@@ -271,6 +350,28 @@ def main():
     shake = 0
     game_over = False
 
+    state = "menu"
+    name = ""
+    scores = []
+    start_button = Button("START GAME", WIDTH // 2 - 110, 360)
+    leaderboard_button = Button("LEADERBOARD", WIDTH // 2 - 110, 425)
+    quit_button = Button("QUIT", WIDTH // 2 - 110, 490)
+    back_button = Button("BACK", WIDTH // 2 - 110, 570)
+    menu_buttons = [start_button, leaderboard_button, quit_button]
+    menu_enemies = [Enemy(0, 0, i % 5) for i in range(7)]
+
+    def reset():
+        nonlocal player, wave, score, enemies, bullets, particles, powerups
+        nonlocal enemy_dir, shake, game_over
+        player = Player()
+        wave = 1
+        score = 0
+        enemies = spawn_wave(wave)
+        bullets, particles, powerups = [], [], []
+        enemy_dir = 1
+        shake = 0
+        game_over = False
+
     while True:
         clock.tick(FPS)
         keys = pygame.key.get_pressed()
@@ -279,18 +380,37 @@ def main():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
-            if event.type == pygame.KEYDOWN:
-                if game_over and event.key == pygame.K_r:
-                    # Neustart
-                    player = Player()
-                    wave = 1
-                    score = 0
-                    enemies = spawn_wave(wave)
-                    bullets.clear()
-                    particles.clear()
-                    powerups.clear()
-                    enemy_dir = 1
-                    game_over = False
+            left_click = event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+
+            if state == "menu" and left_click:
+                if start_button.clicked(event.pos):
+                    reset()
+                    state = "playing"
+                elif leaderboard_button.clicked(event.pos):
+                    scores = load_leaderboard()
+                    state = "leaderboard"
+                elif quit_button.clicked(event.pos):
+                    pygame.quit()
+                    sys.exit()
+
+            elif state == "leaderboard" and left_click:
+                if back_button.clicked(event.pos):
+                    state = "menu"
+
+            elif state == "playing" and event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    state = "menu"
+
+            elif state == "gameover" and event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN:
+                    scores = add_score(name.strip() or "Anonymous", score)
+                    state = "leaderboard"
+                elif event.key == pygame.K_ESCAPE:
+                    state = "menu"
+                elif event.key == pygame.K_BACKSPACE:
+                    name = name[:-1]
+                elif event.unicode.isprintable() and len(name) < 14:
+                    name += event.unicode
 
         # --- UPDATE ---
         for star in stars:
@@ -301,7 +421,7 @@ def main():
             if p.life <= 0:
                 particles.remove(p)
 
-        if not game_over:
+        if state == "playing":
             player.update(keys)
             if keys[pygame.K_SPACE] or keys[pygame.K_UP] or keys[pygame.K_w]:
                 player.shoot(bullets)
@@ -387,6 +507,22 @@ def main():
                 bullets.clear()
                 enemies = spawn_wave(wave)
 
+            if game_over:
+                state = "gameover"
+                name = ""
+
+        # --- MENÜ & BESTENLISTE ---
+        if state in ("menu", "leaderboard"):
+            screen.fill(BLACK)
+            for star in stars:
+                star.draw(screen)
+            if state == "menu":
+                draw_menu(screen, menu_enemies, menu_buttons, pygame.time.get_ticks() / 1000)
+            else:
+                draw_leaderboard(screen, scores, back_button)
+            pygame.display.flip()
+            continue
+
         # --- ZEICHNEN ---
         render_surf = pygame.Surface((WIDTH, HEIGHT))
         render_surf.fill(BLACK)
@@ -422,10 +558,18 @@ def main():
             render_surf.blit(t_txt, (20, 42))
 
         if game_over:
-            over_txt = font_large.render("GAME OVER", True, RED)
-            final_txt = font_small.render(f"Final Score: {score}  |  Press [R] to Restart", True, WHITE)
-            render_surf.blit(over_txt, (WIDTH // 2 - over_txt.get_width() // 2, HEIGHT // 2 - 40))
-            render_surf.blit(final_txt, (WIDTH // 2 - final_txt.get_width() // 2, HEIGHT // 2 + 25))
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 170))
+            render_surf.blit(overlay, (0, 0))
+            draw_text(render_surf, "GAME OVER", font_large, RED, WIDTH // 2, 190)
+            draw_text(render_surf, f"Final Score: {score}", font_small, WHITE, WIDTH // 2, 255)
+            draw_text(render_surf, "Enter your name:", font_small, CYAN, WIDTH // 2, 310)
+            box = pygame.Rect(WIDTH // 2 - 130, 345, 260, 42)
+            pygame.draw.rect(render_surf, (30, 35, 60), box, border_radius=6)
+            pygame.draw.rect(render_surf, CYAN, box, 2, border_radius=6)
+            cursor = "|" if pygame.time.get_ticks() // 500 % 2 == 0 else ""
+            draw_text(render_surf, name + cursor, font_small, WHITE, WIDTH // 2, box.y + 11)
+            draw_text(render_surf, "ENTER to save, ESC to skip", font_small, WHITE, WIDTH // 2, 405)
 
         # Screen-Shake bei Treffer
         offset_x, offset_y = 0, 0
