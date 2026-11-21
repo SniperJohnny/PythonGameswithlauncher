@@ -121,7 +121,8 @@ int main(int argc, char *argv[]) {
     struct EngineOptions options = {0};
     options.title  = "C engine test";
     options.width  = 960;
-    options.height = 564;
+    options.height = 564
+    ;
 
     Engine engine;
     if (ENGINE_init(&engine, &options) != 0) {
