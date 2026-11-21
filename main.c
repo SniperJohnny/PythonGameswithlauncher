@@ -119,7 +119,7 @@ static void on_spaceinvaders_click(void *ud) {
 int main(int argc, char *argv[]) {
 
     struct EngineOptions options = {0};
-    options.title  = "C engine test";
+    options.title  = "C Game Launcher for python Programms";
     options.width  = 960;
     options.height = 564;
 

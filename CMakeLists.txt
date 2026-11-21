@@ -19,15 +19,11 @@ add_custom_command(TARGET gamelauncher POST_BUILD
 # --- SDL2 core (ships its own cmake config) ---
 find_package(SDL2 REQUIRED)
 
-# --- SDL2_image (ships its own cmake config) ---
-find_package(SDL2_image REQUIRED)
-
 # --- SDL2_ttf (ships its own cmake config) ---
 find_package(SDL2_ttf CONFIG REQUIRED)
 
 target_link_libraries(gamelauncher PRIVATE
         SDL2::SDL2
-        SDL2_image::SDL2_image
         $<IF:$<TARGET_EXISTS:SDL2_ttf::SDL2_ttf>,SDL2_ttf::SDL2_ttf,SDL2_ttf::SDL2_ttf-static>
         ${SDL2_gfx_LIBRARIES}
 )
