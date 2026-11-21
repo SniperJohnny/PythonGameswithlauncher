@@ -85,7 +85,7 @@ static void on_pong_click(void *ud) {
     (void)ud;
     if (!SDL_AtomicCAS(&setup_running, 0, 1)) return;
 
-    SDL_Thread *t = SDL_CreateThread(run_game_thread, "pong_thread", (void*)"pong.py");
+    SDL_Thread *t = SDL_CreateThread(run_game_thread, "pong_thread", (void*)"Pong.py");
     if (!t) {
         SDL_AtomicSet(&setup_running, 0);
         return;
